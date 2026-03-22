@@ -57,6 +57,10 @@ See `prisma/schema.prisma` for full schema. Application statuses: `APPLIED → O
 
 See `.env.example` — required: `DATABASE_URL`, `AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENAI_API_KEY`.
 
+## Adding New Features or Fixing Bugs
+**IMPORTANT**: When you work on a new feature or bug, ask me to create a git branch fo you first. Then I will shift to that branch and then you work on changes on that branch for the remainder of the session.
+
+
 ## Additional Documentation
 
 Check these when working in the relevant area:
