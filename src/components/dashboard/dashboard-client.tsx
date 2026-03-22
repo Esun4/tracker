@@ -20,7 +20,6 @@ interface DashboardData {
     total: number;
     byStatus: Record<string, number>;
     interviewRate: number;
-    offerRate: number;
   };
   activities: Awaited<ReturnType<typeof getRecentActivity>>;
   sources: string[];

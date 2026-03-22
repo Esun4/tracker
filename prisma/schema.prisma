@@ -75,7 +75,6 @@ model VerificationToken {
 // ─── Application Tracker ────────────────────────────────────
 
 enum ApplicationStatus {
-  APPLYING
   APPLIED
   OA
   INTERVIEW
@@ -92,7 +91,7 @@ model Application {
   roleTitle       String
   location        String?
   applicationDate DateTime?
-  status          ApplicationStatus @default(APPLYING)
+  status          ApplicationStatus @default(APPLIED)
   source          String?
   notes           String?
   contactInfo     String?

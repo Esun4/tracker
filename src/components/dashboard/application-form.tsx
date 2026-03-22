@@ -119,7 +119,7 @@ export function ApplicationForm({
               <Label htmlFor="status">Status</Label>
               <Select
                 name="status"
-                defaultValue={application?.status ?? "APPLYING"}
+                defaultValue={application?.status ?? "APPLIED"}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -174,7 +174,7 @@ export function ApplicationForm({
                     ? new Date(application.applicationDate)
                         .toISOString()
                         .split("T")[0]
-                    : ""
+                    : new Date().toISOString().split("T")[0]
                 }
               />
             </div>

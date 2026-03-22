@@ -231,14 +231,11 @@ export async function getStats() {
     (byStatus.INTERVIEW || 0) +
     (byStatus.FINAL_ROUND || 0) +
     (byStatus.OFFER || 0);
-  const offers = byStatus.OFFER || 0;
-  const applied = total - (byStatus.APPLYING || 0);
 
   return {
     total,
     byStatus,
-    interviewRate: applied > 0 ? interviews / applied : 0,
-    offerRate: applied > 0 ? offers / applied : 0,
+    interviewRate: total > 0 ? interviews / total : 0,
   };
 }
 

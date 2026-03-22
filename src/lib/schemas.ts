@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const applicationStatuses = [
-  "APPLYING",
   "APPLIED",
   "OA",
   "INTERVIEW",
@@ -14,7 +13,6 @@ export const applicationStatuses = [
 export type ApplicationStatusType = (typeof applicationStatuses)[number];
 
 export const statusLabels: Record<ApplicationStatusType, string> = {
-  APPLYING: "Applying",
   APPLIED: "Applied",
   OA: "OA",
   INTERVIEW: "Interview",
@@ -25,7 +23,6 @@ export const statusLabels: Record<ApplicationStatusType, string> = {
 };
 
 export const statusColors: Record<ApplicationStatusType, string> = {
-  APPLYING: "bg-blue-100 text-blue-800",
   APPLIED: "bg-indigo-100 text-indigo-800",
   OA: "bg-yellow-100 text-yellow-800",
   INTERVIEW: "bg-purple-100 text-purple-800",
@@ -40,7 +37,7 @@ export const applicationSchema = z.object({
   roleTitle: z.string().min(1, "Role title is required"),
   location: z.string().optional(),
   applicationDate: z.string().optional(),
-  status: z.enum(applicationStatuses).default("APPLYING"),
+  status: z.enum(applicationStatuses).default("APPLIED"),
   source: z.string().optional(),
   notes: z.string().optional(),
   contactInfo: z.string().optional(),

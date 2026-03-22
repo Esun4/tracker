@@ -1,44 +1,47 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Briefcase, TrendingUp, Award, BarChart3 } from "lucide-react";
+import { Briefcase, TrendingUp, BarChart3, XCircle } from "lucide-react";
 
 interface StatsCardsProps {
   stats: {
     total: number;
     byStatus: Record<string, number>;
     interviewRate: number;
-    offerRate: number;
   };
 }
 
 export function StatsCards({ stats }: StatsCardsProps) {
+  const active =
+    stats.total -
+    (stats.byStatus.REJECTED || 0) -
+    (stats.byStatus.WITHDRAWN || 0) -
+    (stats.byStatus.OFFER || 0);
+
+  const interviews =
+    (stats.byStatus.INTERVIEW || 0) +
+    (stats.byStatus.FINAL_ROUND || 0);
+
+  const rejections = stats.byStatus.REJECTED || 0;
+
   const cards = [
     {
       title: "Total Applications",
-      value: stats.total,
+      value: stats.total.toString(),
       icon: Briefcase,
-      format: (v: number) => v.toString(),
     },
     {
       title: "Active",
-      value:
-        stats.total -
-        (stats.byStatus.REJECTED || 0) -
-        (stats.byStatus.WITHDRAWN || 0) -
-        (stats.byStatus.OFFER || 0),
+      value: active.toString(),
       icon: BarChart3,
-      format: (v: number) => v.toString(),
     },
     {
-      title: "Interview Rate",
-      value: stats.interviewRate,
+      title: "Interviews",
+      value: interviews.toString(),
       icon: TrendingUp,
-      format: (v: number) => `${(v * 100).toFixed(0)}%`,
     },
     {
-      title: "Offer Rate",
-      value: stats.offerRate,
-      icon: Award,
-      format: (v: number) => `${(v * 100).toFixed(0)}%`,
+      title: "Rejections",
+      value: rejections.toString(),
+      icon: XCircle,
     },
   ];
 
@@ -53,7 +56,7 @@ export function StatsCards({ stats }: StatsCardsProps) {
             <card.icon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{card.format(card.value)}</div>
+            <div className="text-2xl font-bold">{card.value}</div>
           </CardContent>
         </Card>
       ))}
