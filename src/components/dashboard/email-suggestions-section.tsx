@@ -484,6 +484,7 @@ export function EmailSuggestionsSection({
 
       {accepting && accepting.suggestedAction === "NEW_APPLICATION" && (
         <NewApplicationDialog
+          key={accepting.id}
           suggestion={accepting}
           onClose={() => setAccepting(null)}
           onResolved={onResolved}
@@ -492,6 +493,7 @@ export function EmailSuggestionsSection({
 
       {accepting && accepting.suggestedAction === "STATUS_UPDATE" && (
         <StatusUpdateDialog
+          key={accepting.id}
           suggestion={accepting}
           applications={applications}
           onClose={() => setAccepting(null)}

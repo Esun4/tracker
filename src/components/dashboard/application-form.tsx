@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,6 +40,11 @@ const commonSources = [
   "Other",
 ];
 
+function toDateString(d: Date | string | null | undefined): string {
+  if (!d) return new Date().toISOString().split("T")[0];
+  return new Date(d).toISOString().split("T")[0];
+}
+
 export function ApplicationForm({
   open,
   onOpenChange,
@@ -48,20 +53,42 @@ export function ApplicationForm({
   const [loading, setLoading] = useState(false);
   const isEditing = !!application;
 
+  const [company, setCompany] = useState(application?.company ?? "");
+  const [roleTitle, setRoleTitle] = useState(application?.roleTitle ?? "");
+  const [location, setLocation] = useState(application?.location ?? "");
+  const [applicationDate, setApplicationDate] = useState(
+    toDateString(application?.applicationDate)
+  );
+  const [status, setStatus] = useState(application?.status ?? "APPLIED");
+  const [source, setSource] = useState(application?.source ?? "");
+  const [notes, setNotes] = useState(application?.notes ?? "");
+  const [contactInfo, setContactInfo] = useState(application?.contactInfo ?? "");
+
+  // Reset all fields whenever the target application changes
+  useEffect(() => {
+    setCompany(application?.company ?? "");
+    setRoleTitle(application?.roleTitle ?? "");
+    setLocation(application?.location ?? "");
+    setApplicationDate(toDateString(application?.applicationDate));
+    setStatus(application?.status ?? "APPLIED");
+    setSource(application?.source ?? "");
+    setNotes(application?.notes ?? "");
+    setContactInfo(application?.contactInfo ?? "");
+  }, [application?.id]);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
 
-    const formData = new FormData(e.currentTarget);
     const data = {
-      company: formData.get("company") as string,
-      roleTitle: formData.get("roleTitle") as string,
-      location: formData.get("location") as string,
-      applicationDate: formData.get("applicationDate") as string,
-      status: formData.get("status") as string,
-      source: formData.get("source") as string,
-      notes: formData.get("notes") as string,
-      contactInfo: formData.get("contactInfo") as string,
+      company,
+      roleTitle,
+      location,
+      applicationDate,
+      status,
+      source,
+      notes,
+      contactInfo,
     };
 
     const result = isEditing
@@ -75,9 +102,7 @@ export function ApplicationForm({
       return;
     }
 
-    toast.success(
-      isEditing ? "Application updated" : "Application added"
-    );
+    toast.success(isEditing ? "Application updated" : "Application added");
     onOpenChange(false);
   }
 
@@ -98,7 +123,8 @@ export function ApplicationForm({
                 id="company"
                 name="company"
                 required
-                defaultValue={application?.company ?? ""}
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
                 placeholder="e.g. Google"
               />
             </div>
@@ -108,7 +134,8 @@ export function ApplicationForm({
                 id="roleTitle"
                 name="roleTitle"
                 required
-                defaultValue={application?.roleTitle ?? ""}
+                value={roleTitle}
+                onChange={(e) => setRoleTitle(e.target.value)}
                 placeholder="e.g. Software Engineer Intern"
               />
             </div>
@@ -119,15 +146,16 @@ export function ApplicationForm({
               <Label htmlFor="status">Status</Label>
               <Select
                 name="status"
-                defaultValue={application?.status ?? "APPLIED"}
+                value={status}
+                onValueChange={(v) => { if (v) setStatus(v); }}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {applicationStatuses.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {statusLabels[status]}
+                  {applicationStatuses.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {statusLabels[s]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -137,15 +165,16 @@ export function ApplicationForm({
               <Label htmlFor="source">Source</Label>
               <Select
                 name="source"
-                defaultValue={application?.source ?? ""}
+                value={source}
+                onValueChange={(v) => { if (v !== null) setSource(v); }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select source" />
                 </SelectTrigger>
                 <SelectContent>
-                  {commonSources.map((source) => (
-                    <SelectItem key={source} value={source}>
-                      {source}
+                  {commonSources.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -159,7 +188,8 @@ export function ApplicationForm({
               <Input
                 id="location"
                 name="location"
-                defaultValue={application?.location ?? ""}
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
                 placeholder="e.g. San Francisco, CA"
               />
             </div>
@@ -169,13 +199,8 @@ export function ApplicationForm({
                 id="applicationDate"
                 name="applicationDate"
                 type="date"
-                defaultValue={
-                  application?.applicationDate
-                    ? new Date(application.applicationDate)
-                        .toISOString()
-                        .split("T")[0]
-                    : new Date().toISOString().split("T")[0]
-                }
+                value={applicationDate}
+                onChange={(e) => setApplicationDate(e.target.value)}
               />
             </div>
           </div>
@@ -185,7 +210,8 @@ export function ApplicationForm({
             <Input
               id="contactInfo"
               name="contactInfo"
-              defaultValue={application?.contactInfo ?? ""}
+              value={contactInfo}
+              onChange={(e) => setContactInfo(e.target.value)}
               placeholder="e.g. Jane Doe - jane@company.com"
             />
           </div>
@@ -195,7 +221,8 @@ export function ApplicationForm({
             <Textarea
               id="notes"
               name="notes"
-              defaultValue={application?.notes ?? ""}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
               placeholder="Any notes about this application..."
               rows={3}
             />
