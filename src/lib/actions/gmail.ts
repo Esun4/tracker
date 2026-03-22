@@ -69,7 +69,7 @@ export async function syncGmailEmails() {
 
   const listResponse = await gmail.users.messages.list({
     userId: "me",
-    maxResults: 10,
+    maxResults: 20,
   });
 
   const messages = listResponse.data.messages ?? [];

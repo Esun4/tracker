@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ChevronDown, ChevronRight, Mail, X, Check } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Mail,
+  X,
+  Check,
+  ScanText,
+} from "lucide-react";
 import {
   applicationStatuses,
   statusLabels,
@@ -28,6 +36,7 @@ import {
   dismissSuggestion,
   acceptNewApplication,
   acceptStatusUpdate,
+  acceptAllSuggestions,
 } from "@/lib/actions/suggestions";
 import { toast } from "sonner";
 import type { Application, EmailSuggestion } from "@/generated/prisma/client";
@@ -58,6 +67,302 @@ const commonSources = [
   "Handshake",
   "Other",
 ];
+
+// ─── Step-through review modal ───────────────────────────────────────────────
+
+function SuggestionReviewModal({
+  suggestions: initialSuggestions,
+  applications,
+  onClose,
+  onResolved,
+}: {
+  suggestions: EmailSuggestion[];
+  applications: Application[];
+  onClose: () => void;
+  onResolved: () => void;
+}) {
+  const [suggestions, setSuggestions] = useState(initialSuggestions);
+  const [index, setIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  // Status-update inline fields
+  const [selectedAppId, setSelectedAppId] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("REJECTED");
+
+  const current = suggestions[index];
+
+  // Auto-populate status-update fields when suggestion changes
+  useEffect(() => {
+    if (!current) return;
+    if (current.suggestedAction === "STATUS_UPDATE") {
+      const match = applications.find(
+        (a) =>
+          current.suggestedCompany &&
+          a.company.toLowerCase() === current.suggestedCompany.toLowerCase()
+      );
+      setSelectedAppId(match?.id ?? "");
+      setSelectedStatus(current.suggestedStatus ?? "REJECTED");
+    }
+  }, [current?.id]);
+
+  // Close when all suggestions resolved
+  useEffect(() => {
+    if (suggestions.length === 0) onClose();
+  }, [suggestions.length]);
+
+  if (!current) return null;
+
+  function removeCurrent() {
+    const next = suggestions.filter((s) => s.id !== current.id);
+    const newIndex = index >= next.length ? Math.max(0, next.length - 1) : index;
+    setSuggestions(next);
+    setIndex(newIndex);
+  }
+
+  async function handleAccept() {
+    setLoading(true);
+    let result;
+
+    if (current.suggestedAction === "NEW_APPLICATION") {
+      result = await acceptNewApplication(current.id, {
+        company: current.suggestedCompany ?? "Unknown",
+        roleTitle: current.suggestedRole ?? "Unknown",
+        status: current.suggestedStatus ?? "APPLIED",
+      });
+    } else {
+      if (!selectedAppId) {
+        toast.error("Please select an application to update");
+        setLoading(false);
+        return;
+      }
+      result = await acceptStatusUpdate(current.id, selectedAppId, selectedStatus);
+    }
+
+    setLoading(false);
+
+    if ("error" in result && result.error) {
+      toast.error(result.error);
+      return;
+    }
+
+    toast.success(
+      current.suggestedAction === "NEW_APPLICATION"
+        ? "Application added"
+        : "Status updated"
+    );
+    removeCurrent();
+    onResolved();
+  }
+
+  async function handleDecline() {
+    setLoading(true);
+    await dismissSuggestion(current.id);
+    setLoading(false);
+    removeCurrent();
+    onResolved();
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Review Suggestions</DialogTitle>
+        </DialogHeader>
+
+        {/* Progress indicator */}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {suggestions.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setIndex(i)}
+                className={`h-1.5 rounded-full transition-all ${
+                  i === index
+                    ? "w-6 bg-primary"
+                    : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                }`}
+              />
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {index + 1} of {suggestions.length}
+          </span>
+        </div>
+
+        {/* Action badge + confidence */}
+        <div className="flex items-center gap-2">
+          <span
+            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              actionColors[current.suggestedAction] ?? ""
+            }`}
+          >
+            {actionLabels[current.suggestedAction] ?? current.suggestedAction}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <div className="h-1.5 w-16 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${Math.round(current.confidence * 100)}%` }}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {Math.round(current.confidence * 100)}% confidence
+            </span>
+          </div>
+        </div>
+
+        {/* Email details */}
+        <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1.5">
+          <p className="text-muted-foreground">
+            <span className="font-medium text-foreground">From:</span>{" "}
+            {current.emailSender}
+          </p>
+          <p className="text-muted-foreground">
+            <span className="font-medium text-foreground">Subject:</span>{" "}
+            {current.emailSubject}
+          </p>
+          <p className="text-muted-foreground">
+            <span className="font-medium text-foreground">Date:</span>{" "}
+            {new Date(current.emailDate).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
+          </p>
+          {current.emailSnippet && (
+            <p className="border-t border-border/50 pt-2 mt-2 text-muted-foreground italic leading-relaxed">
+              {current.emailSnippet}
+            </p>
+          )}
+        </div>
+
+        {/* Suggested outcome */}
+        <div className="rounded-md border p-3 text-sm space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+            Suggested
+          </p>
+          {current.suggestedCompany && (
+            <p>
+              <span className="font-medium">Company:</span>{" "}
+              {current.suggestedCompany}
+            </p>
+          )}
+          {current.suggestedRole && (
+            <p>
+              <span className="font-medium">Role:</span> {current.suggestedRole}
+            </p>
+          )}
+          {current.suggestedStatus && (
+            <p>
+              <span className="font-medium">Status:</span>{" "}
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                  statusColors[current.suggestedStatus] ?? ""
+                }`}
+              >
+                {statusLabels[current.suggestedStatus] ?? current.suggestedStatus}
+              </span>
+            </p>
+          )}
+          {current.reasoning && (
+            <p className="text-muted-foreground italic border-t border-border/50 pt-2 mt-2">
+              {current.reasoning}
+            </p>
+          )}
+        </div>
+
+        {/* Status-update app selector (only when no auto-match or needs confirmation) */}
+        {current.suggestedAction === "STATUS_UPDATE" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Application to update</Label>
+              <Select
+                value={selectedAppId}
+                onValueChange={(v) => { if (v) setSelectedAppId(v); }}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Select application" />
+                </SelectTrigger>
+                <SelectContent>
+                  {applications
+                    .filter((a) => !a.archived)
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.company} — {a.roleTitle}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">New status</Label>
+              <Select
+                value={selectedStatus}
+                onValueChange={(v) => { if (v) setSelectedStatus(v); }}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {applicationStatuses.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {statusLabels[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+
+        {/* Navigation + actions */}
+        <div className="flex items-center justify-between pt-1">
+          <div className="flex gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => setIndex((i) => Math.max(0, i - 1))}
+              disabled={index === 0 || loading}
+              title="Previous"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => setIndex((i) => Math.min(suggestions.length - 1, i + 1))}
+              disabled={index === suggestions.length - 1 || loading}
+              title="Next"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDecline}
+              disabled={loading}
+              className="text-destructive hover:text-destructive"
+            >
+              <X className="mr-1 h-3.5 w-3.5" />
+              Decline
+            </Button>
+            <Button size="sm" onClick={handleAccept} disabled={loading}>
+              <Check className="mr-1 h-3.5 w-3.5" />
+              {loading ? "Saving..." : "Accept"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Individual accept dialogs (row-level) ───────────────────────────────────
 
 function NewApplicationDialog({
   suggestion,
@@ -147,10 +452,7 @@ function NewApplicationDialog({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="status">Status</Label>
-              <Select
-                name="status"
-                defaultValue={suggestion.suggestedStatus ?? "APPLIED"}
-              >
+              <Select name="status" defaultValue={suggestion.suggestedStatus ?? "APPLIED"}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -250,7 +552,6 @@ function StatusUpdateDialog({
 }) {
   const [loading, setLoading] = useState(false);
 
-  // Pre-match by company name (case-insensitive)
   const matchedApp = applications.find(
     (a) =>
       suggestion.suggestedCompany &&
@@ -268,11 +569,7 @@ function StatusUpdateDialog({
       return;
     }
     setLoading(true);
-    const result = await acceptStatusUpdate(
-      suggestion.id,
-      selectedAppId,
-      selectedStatus
-    );
+    const result = await acceptStatusUpdate(suggestion.id, selectedAppId, selectedStatus);
     setLoading(false);
 
     if (result.error) {
@@ -361,6 +658,8 @@ function StatusUpdateDialog({
   );
 }
 
+// ─── Main section ─────────────────────────────────────────────────────────────
+
 export function EmailSuggestionsSection({
   suggestions,
   applications,
@@ -369,8 +668,27 @@ export function EmailSuggestionsSection({
   const [collapsed, setCollapsed] = useState(false);
   const [accepting, setAccepting] = useState<EmailSuggestion | null>(null);
   const [dismissing, setDismissing] = useState<string | null>(null);
+  const [acceptingAll, setAcceptingAll] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   if (suggestions.length === 0) return null;
+
+  async function handleAcceptAll() {
+    setAcceptingAll(true);
+    const result = await acceptAllSuggestions();
+    setAcceptingAll(false);
+
+    const { accepted, skipped } = result;
+    if (skipped > 0) {
+      toast.success(
+        `Accepted ${accepted} suggestion${accepted === 1 ? "" : "s"} · ${skipped} status update${skipped === 1 ? "" : "s"} skipped (no matching application found)`
+      );
+    } else {
+      toast.success(`Accepted ${accepted} suggestion${accepted === 1 ? "" : "s"}`);
+    }
+
+    onResolved();
+  }
 
   async function handleDismiss(id: string) {
     setDismissing(id);
@@ -385,21 +703,46 @@ export function EmailSuggestionsSection({
 
   return (
     <div className="rounded-lg border bg-card">
-      <button
-        className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors rounded-lg"
-        onClick={() => setCollapsed(!collapsed)}
-      >
-        {collapsed ? (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        )}
-        <Mail className="h-4 w-4 text-muted-foreground" />
-        <span>Email Suggestions</span>
-        <span className="ml-1 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-          {suggestions.length}
-        </span>
-      </button>
+      <div className="flex items-center justify-between px-4 py-3">
+        <button
+          className="flex items-center gap-2 text-sm font-medium hover:opacity-70 transition-opacity"
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+          <Mail className="h-4 w-4 text-muted-foreground" />
+          <span>Email Suggestions</span>
+          <span className="ml-1 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+            {suggestions.length}
+          </span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setReviewOpen(true)}
+          >
+            <ScanText className="mr-1 h-3 w-3" />
+            Review
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={handleAcceptAll}
+            disabled={acceptingAll}
+          >
+            <Check className="mr-1 h-3 w-3" />
+            {acceptingAll ? "Accepting..." : `Accept All (${suggestions.length})`}
+          </Button>
+        </div>
+      </div>
 
       {!collapsed && (
         <div className="border-t">
@@ -482,6 +825,17 @@ export function EmailSuggestionsSection({
         </div>
       )}
 
+      {/* Step-through review modal */}
+      {reviewOpen && (
+        <SuggestionReviewModal
+          suggestions={suggestions}
+          applications={applications}
+          onClose={() => setReviewOpen(false)}
+          onResolved={onResolved}
+        />
+      )}
+
+      {/* Row-level accept dialogs (editable forms) */}
       {accepting && accepting.suggestedAction === "NEW_APPLICATION" && (
         <NewApplicationDialog
           key={accepting.id}
