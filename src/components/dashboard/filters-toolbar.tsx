@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Search, X, Plus, Mail, RefreshCw } from "lucide-react";
+import { Search, X, Plus, Mail, RefreshCw, Download, Upload } from "lucide-react";
 import { applicationStatuses, statusLabels } from "@/lib/schemas";
 
 interface FiltersToolbarProps {
@@ -26,6 +26,8 @@ interface FiltersToolbarProps {
   onSyncGmail: () => void;
   isSyncing: boolean;
   pendingSuggestions: number;
+  onExport: () => void;
+  onImport: () => void;
 }
 
 export function FiltersToolbar({
@@ -42,6 +44,8 @@ export function FiltersToolbar({
   onSyncGmail,
   isSyncing,
   pendingSuggestions,
+  onExport,
+  onImport,
 }: FiltersToolbarProps) {
   const hasFilters = search || statusFilter || sourceFilter || showArchived;
 
@@ -127,6 +131,16 @@ export function FiltersToolbar({
               {pendingSuggestions}
             </span>
           )}
+        </Button>
+
+        <Button variant="outline" size="sm" className="h-9" onClick={onImport}>
+          <Upload className="mr-1 h-4 w-4" />
+          Import CSV
+        </Button>
+
+        <Button variant="outline" size="sm" className="h-9" onClick={onExport}>
+          <Download className="mr-1 h-4 w-4" />
+          Export CSV
         </Button>
 
         <Button size="sm" className="h-9" onClick={onAddNew}>

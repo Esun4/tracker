@@ -240,6 +240,53 @@ export async function deleteApplication(id: string) {
   return { success: true };
 }
 
+export async function importApplications(
+  rows: Array<{
+    company: string;
+    roleTitle: string;
+    status?: string;
+    location?: string;
+    applicationDate?: string;
+    source?: string;
+    notes?: string;
+    contactInfo?: string;
+  }>
+) {
+  const userId = await getAuthUserId();
+  const now = new Date();
+
+  const created = await prisma.$transaction(
+    rows.map((row) =>
+      prisma.application.create({
+        data: {
+          userId,
+          company: row.company,
+          roleTitle: row.roleTitle,
+          status: (row.status as ApplicationStatus) ?? "APPLIED",
+          location: row.location || null,
+          applicationDate: row.applicationDate ? new Date(row.applicationDate) : now,
+          source: row.source || null,
+          notes: row.notes || null,
+          contactInfo: row.contactInfo || null,
+        },
+      })
+    )
+  );
+
+  await prisma.activityLog.createMany({
+    data: created.map((app) => ({
+      userId,
+      applicationId: app.id,
+      action: "created",
+      details: { company: app.company, roleTitle: app.roleTitle, status: app.status },
+      source: "csv_import",
+    })),
+  });
+
+  revalidatePath("/dashboard");
+  return { success: true, count: created.length };
+}
+
 export async function getStats() {
   const userId = await getAuthUserId();
 

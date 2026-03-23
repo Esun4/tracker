@@ -128,6 +128,7 @@ function SuggestionReviewModal({
         company: current.suggestedCompany ?? "Unknown",
         roleTitle: current.suggestedRole ?? "Unknown",
         status: current.suggestedStatus ?? "APPLIED",
+        applicationDate: new Date(current.emailDate).toISOString().split("T")[0],
       });
     } else {
       if (!selectedAppId) {

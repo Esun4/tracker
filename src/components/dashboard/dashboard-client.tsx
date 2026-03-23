@@ -7,6 +7,7 @@ import { ApplicationForm } from "./application-form";
 import { FiltersToolbar } from "./filters-toolbar";
 import { ActivityFeed } from "./activity-feed";
 import { EmailSuggestionsSection } from "./email-suggestions-section";
+import { ImportCsvDialog } from "./import-csv-dialog";
 import {
   getApplications,
   getStats,
@@ -16,6 +17,7 @@ import {
 import { getUnresolvedSuggestions } from "@/lib/actions/suggestions";
 import { syncGmailEmails } from "@/lib/actions/gmail";
 import type { Application, EmailSuggestion } from "@/generated/prisma/client";
+import { statusLabels } from "@/lib/schemas";
 import { toast } from "sonner";
 
 interface DashboardData {
@@ -41,6 +43,7 @@ export function DashboardClient({ initial }: { initial: DashboardData }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const refresh = useCallback(() => {
     startTransition(async () => {
@@ -76,6 +79,54 @@ export function DashboardClient({ initial }: { initial: DashboardData }) {
       setSortBy(column);
       setSortOrder("asc");
     }
+  }
+
+  function handleExport() {
+    const apps = data.applications;
+    if (apps.length === 0) {
+      toast.info("No applications to export");
+      return;
+    }
+
+    const headers = [
+      "Company",
+      "Role",
+      "Status",
+      "Location",
+      "Application Date",
+      "Source",
+      "Contact / Recruiter",
+      "Notes",
+      "Archived",
+    ];
+
+    function escape(val: string | null | undefined): string {
+      const str = val ?? "";
+      return str.includes(",") || str.includes('"') || str.includes("\n")
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    }
+
+    const rows = apps.map((a) => [
+      escape(a.company),
+      escape(a.roleTitle),
+      escape(statusLabels[a.status as keyof typeof statusLabels] ?? a.status),
+      escape(a.location),
+      escape(a.applicationDate ? new Date(a.applicationDate).toLocaleDateString() : ""),
+      escape(a.source),
+      escape(a.contactInfo),
+      escape(a.notes),
+      a.archived ? "Yes" : "No",
+    ]);
+
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `applications-${new Date().toISOString().split("T")[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleSyncGmail() {
@@ -127,6 +178,8 @@ export function DashboardClient({ initial }: { initial: DashboardData }) {
             onSyncGmail={handleSyncGmail}
             isSyncing={isSyncing}
             pendingSuggestions={data.suggestions.length}
+            onExport={handleExport}
+            onImport={() => setShowImport(true)}
           />
 
           <div className={isPending ? "opacity-60 pointer-events-none" : ""}>
@@ -154,6 +207,12 @@ export function DashboardClient({ initial }: { initial: DashboardData }) {
           setShowAddForm(open);
           if (!open) refresh();
         }}
+      />
+
+      <ImportCsvDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        onSuccess={refresh}
       />
     </div>
   );
