@@ -27,6 +27,7 @@ interface ApplicationFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   application?: Application | null;
+  onSuccess?: () => void;
 }
 
 const commonSources = [
@@ -49,6 +50,7 @@ export function ApplicationForm({
   open,
   onOpenChange,
   application,
+  onSuccess,
 }: ApplicationFormProps) {
   const [loading, setLoading] = useState(false);
   const isEditing = !!application;
@@ -104,6 +106,7 @@ export function ApplicationForm({
 
     toast.success(isEditing ? "Application updated" : "Application added");
     onOpenChange(false);
+    onSuccess?.();
   }
 
   return (

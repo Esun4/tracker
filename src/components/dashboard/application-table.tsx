@@ -36,6 +36,7 @@ interface ApplicationTableProps {
   sortBy: string;
   sortOrder: "asc" | "desc";
   onSort: (column: string) => void;
+  onUpdate?: () => void;
 }
 
 export function ApplicationTable({
@@ -43,6 +44,7 @@ export function ApplicationTable({
   sortBy,
   sortOrder,
   onSort,
+  onUpdate,
 }: ApplicationTableProps) {
   const [editApp, setEditApp] = useState<Application | null>(null);
 
@@ -192,6 +194,7 @@ export function ApplicationTable({
           if (!open) setEditApp(null);
         }}
         application={editApp}
+        onSuccess={onUpdate}
       />
     </>
   );

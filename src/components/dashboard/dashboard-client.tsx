@@ -131,10 +131,14 @@ export function DashboardClient({ initial }: { initial: DashboardData }) {
 
           <div className={isPending ? "opacity-60 pointer-events-none" : ""}>
             <ApplicationTable
-              applications={data.applications}
+              applications={[
+                ...data.applications.filter((a) => a.status !== "REJECTED"),
+                ...data.applications.filter((a) => a.status === "REJECTED"),
+              ]}
               sortBy={sortBy}
               sortOrder={sortOrder}
               onSort={handleSort}
+              onUpdate={refresh}
             />
           </div>
         </div>

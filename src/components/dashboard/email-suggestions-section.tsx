@@ -164,7 +164,7 @@ function SuggestionReviewModal({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Review Suggestions</DialogTitle>
         </DialogHeader>
