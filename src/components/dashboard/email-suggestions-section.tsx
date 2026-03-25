@@ -75,14 +75,16 @@ function SuggestionReviewModal({
   applications,
   onClose,
   onResolved,
+  startIndex = 0,
 }: {
   suggestions: EmailSuggestion[];
   applications: Application[];
   onClose: () => void;
   onResolved: () => void;
+  startIndex?: number;
 }) {
   const [suggestions, setSuggestions] = useState(initialSuggestions);
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(startIndex);
   const [loading, setLoading] = useState(false);
 
   // Status-update inline fields
@@ -671,6 +673,12 @@ export function EmailSuggestionsSection({
   const [dismissing, setDismissing] = useState<string | null>(null);
   const [acceptingAll, setAcceptingAll] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewStartIndex, setReviewStartIndex] = useState(0);
+
+  function openReviewAt(index: number) {
+    setReviewStartIndex(index);
+    setReviewOpen(true);
+  }
 
   if (suggestions.length === 0) return null;
 
@@ -726,7 +734,7 @@ export function EmailSuggestionsSection({
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            onClick={() => setReviewOpen(true)}
+            onClick={() => openReviewAt(0)}
           >
             <ScanText className="mr-1 h-3 w-3" />
             Review
@@ -760,8 +768,12 @@ export function EmailSuggestionsSection({
                 </tr>
               </thead>
               <tbody>
-                {suggestions.map((s) => (
-                  <tr key={s.id} className="border-b last:border-0 hover:bg-muted/20">
+                {suggestions.map((s, i) => (
+                  <tr
+                    key={s.id}
+                    className="border-b last:border-0 hover:bg-muted/20 cursor-pointer"
+                    onClick={() => openReviewAt(i)}
+                  >
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -801,7 +813,7 @@ export function EmailSuggestionsSection({
                           size="sm"
                           variant="ghost"
                           className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
-                          onClick={() => setAccepting(s)}
+                          onClick={(e) => { e.stopPropagation(); setAccepting(s); }}
                           title="Accept"
                         >
                           <Check className="h-4 w-4" />
@@ -810,7 +822,7 @@ export function EmailSuggestionsSection({
                           size="sm"
                           variant="ghost"
                           className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => handleDismiss(s.id)}
+                          onClick={(e) => { e.stopPropagation(); handleDismiss(s.id); }}
                           disabled={dismissing === s.id}
                           title="Dismiss"
                         >
@@ -829,10 +841,12 @@ export function EmailSuggestionsSection({
       {/* Step-through review modal */}
       {reviewOpen && (
         <SuggestionReviewModal
+          key={reviewStartIndex}
           suggestions={suggestions}
           applications={applications}
           onClose={() => setReviewOpen(false)}
           onResolved={onResolved}
+          startIndex={reviewStartIndex}
         />
       )}
 

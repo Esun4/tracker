@@ -27,13 +27,59 @@ function extractEmailBody(payload: gmail_v1.Schema$MessagePart): string {
   return "";
 }
 
+const IGNORED_SENDER_DOMAINS = new Set([
+  "gmail", "yahoo", "outlook", "hotmail", "icloud", "protonmail",
+  "indeed", "linkedin", "glassdoor", "handshake", "ziprecruiter",
+  "monster", "waterlooworks", "myworkdayjobs", "greenhouse", "lever",
+  "workable", "ashbyhq", "jobvite", "icims", "taleo", "successfactors",
+]);
+
+function extractCompanyFromSender(from: string): string | null {
+  // Try display name first: "Acme Corp <recruiting@acme.com>"
+  const displayMatch = from.match(/^"?([^"<]+?)"?\s*</);
+  if (displayMatch) {
+    const name = displayMatch[1].trim();
+    // Ignore generic names like "Recruiting", "HR", "Careers", "No Reply", etc.
+    if (!/^(no.?reply|do.?not.?reply|recruiting|careers|hr|jobs|talent|hiring|notifications?|alerts?|support|info|hello|team|noreply)$/i.test(name)) {
+      return name;
+    }
+  }
+
+  // Fall back to domain: strip common subdomains and known generic domains
+  const emailMatch = from.match(/@([^>>\s]+)/);
+  if (emailMatch) {
+    const parts = emailMatch[1].split(".");
+    // Take second-to-last segment (e.g. "acme" from "mail.acme.com")
+    const domain = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    if (!IGNORED_SENDER_DOMAINS.has(domain.toLowerCase())) {
+      // Capitalise first letter
+      return domain.charAt(0).toUpperCase() + domain.slice(1);
+    }
+  }
+
+  return null;
+}
+
 export async function syncGmailEmails() {
   const userId = await getAuthUserId();
 
+  const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { googleAccessToken: true, googleRefreshToken: true },
+    select: { googleAccessToken: true, googleRefreshToken: true, lastEmailSync: true },
   });
+
+  if (user?.lastEmailSync) {
+    const elapsed = Date.now() - new Date(user.lastEmailSync).getTime();
+    if (elapsed < COOLDOWN_MS) {
+      const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      const label = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      return { error: `Please wait ${label} before syncing again.` };
+    }
+  }
 
   if (!user?.googleAccessToken) {
     return {
@@ -153,9 +199,11 @@ export async function syncGmailEmails() {
 - confidence: number (0-1)
 - reasoning: string (one sentence)
 
-NEW_APPLICATION: email confirms an application was submitted.
-STATUS_UPDATE: email signals a change (interview invite, rejection, offer, OA, etc.).
+NEW_APPLICATION: email confirms an application was just submitted (e.g. "we received your application", "your application has been submitted", "thanks for applying").
+STATUS_UPDATE: email signals a change in an existing application — this includes rejections, interview invites, offers, OA invites, and any other update. Common rejection phrases that mean STATUS_UPDATE with status REJECTED: "not moving forward", "will not be moving forward", "not to move forward with your candidacy", "have decided not to proceed", "we will not be proceeding", "after careful consideration", "not selected", "not successful", "unfortunately", "we won't be moving forward", "thank you for taking part in the recruitment process" (when combined with a negative outcome), "keep your details in our database", "we encourage you to apply to future positions".
 IRRELEVANT: unrelated to job applications, OR is an account/profile setup email (e.g. "set up your candidate account", "complete your profile", "verify your email", "activate your account", "create your account", "welcome to", onboarding emails from job platforms, login/password emails). Classify as IRRELEVANT even if the email mentions a company or job title.
+
+IMPORTANT: An email that thanks you for participating in a recruitment process AND delivers a negative outcome is always STATUS_UPDATE (REJECTED), never NEW_APPLICATION. Only classify as NEW_APPLICATION if the email is purely confirming a fresh submission with no outcome mentioned.
 
 For the company field: extract the employer/hiring company, NOT the job board or platform the email was sent through. Indeed, LinkedIn, Glassdoor, Handshake, WaterlooWorks, ZipRecruiter, Monster, and similar are job boards — never use them as the company value. Look inside the email body for the actual employer name (e.g. "You applied to Software Engineer at Stripe" → company: "Stripe"). If you cannot identify the actual employer, set company to null.`,
           },
@@ -186,7 +234,7 @@ For the company field: extract the employer/hiring company, NOT the job board or
         emailSnippet: snippet || null,
         suggestedAction: classification.action as SuggestedAction,
         suggestedStatus: (classification.status as ApplicationStatus) ?? null,
-        suggestedCompany: classification.company ?? null,
+        suggestedCompany: classification.company ?? extractCompanyFromSender(from),
         suggestedRole: classification.role ?? null,
         confidence: Math.min(1, Math.max(0, classification.confidence ?? 0)),
         reasoning: classification.reasoning ?? null,
