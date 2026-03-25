@@ -192,6 +192,12 @@ export function ImportCsvDialog({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File too large — maximum 5MB");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {

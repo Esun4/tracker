@@ -7,7 +7,7 @@ import { z } from "zod";
 const signUpSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(12, "Password must be at least 12 characters"),
 });
 
 export async function signUp(formData: FormData) {

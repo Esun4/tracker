@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import type { Application } from "@/generated/prisma/client";
 
 const FLOW_ORDER = [
@@ -56,8 +57,10 @@ const GAP = 5;
 const MIN_H = 5;
 
 export function FunnelChart({ applications }: { applications: Application[] }) {
-  const active = applications.filter((a) => !a.archived);
-  const total = active.length;
+  const { active, total } = useMemo(() => {
+    const active = applications.filter((a) => !a.archived);
+    return { active, total: active.length };
+  }, [applications]);
 
   if (total === 0) {
     return (
@@ -67,10 +70,10 @@ export function FunnelChart({ applications }: { applications: Application[] }) {
     );
   }
 
-  const counts = active.reduce<Record<string, number>>((acc, app) => {
+  const counts = useMemo(() => active.reduce<Record<string, number>>((acc, app) => {
     acc[app.status] = (acc[app.status] || 0) + 1;
     return acc;
-  }, {});
+  }, {}), [active]);
 
   const flows = FLOW_ORDER.map((f) => ({
     ...f,

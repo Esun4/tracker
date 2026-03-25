@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { applicationSchema } from "@/lib/schemas";
 import { revalidatePath } from "next/cache";
-import { ApplicationStatus } from "@/generated/prisma/client";
+import { ApplicationStatus, ActivitySource } from "@/generated/prisma/client";
 
 async function getAuthUserId(): Promise<string> {
   const session = await auth();
@@ -77,7 +77,7 @@ export async function acceptNewApplication(suggestionId: string, data: unknown) 
         roleTitle: application.roleTitle,
         status: application.status,
       },
-      source: "email_suggestion",
+      source: ActivitySource.email_suggestion,
     },
   });
 
@@ -136,7 +136,7 @@ export async function acceptAllSuggestions() {
             roleTitle: application.roleTitle,
             status: application.status,
           },
-          source: "email_suggestion",
+          source: ActivitySource.email_suggestion,
         },
       });
 
@@ -171,7 +171,7 @@ export async function acceptAllSuggestions() {
             applicationId: match.id,
             action: "updated",
             details: { status: { from: match.status, to: suggestion.suggestedStatus } },
-            source: "email_suggestion",
+            source: ActivitySource.email_suggestion,
           },
         });
 
@@ -234,7 +234,7 @@ export async function acceptStatusUpdate(
       applicationId,
       action: "updated",
       details: { status: { from: existing.status, to: newStatus } },
-      source: "email_suggestion",
+      source: ActivitySource.email_suggestion,
     },
   });
 

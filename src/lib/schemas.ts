@@ -36,7 +36,11 @@ export const applicationSchema = z.object({
   company: z.string().min(1, "Company is required"),
   roleTitle: z.string().min(1, "Role title is required"),
   location: z.string().optional(),
-  applicationDate: z.string().optional(),
+  applicationDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .refine((val) => !isNaN(new Date(val).getTime()), "Invalid date")
+    .optional(),
   status: z.enum(applicationStatuses).default("APPLIED"),
   source: z.string().optional(),
   notes: z.string().optional(),

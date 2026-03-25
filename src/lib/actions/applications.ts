@@ -2,9 +2,13 @@
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { applicationSchema } from "@/lib/schemas";
+import { applicationSchema, applicationStatuses } from "@/lib/schemas";
 import { revalidatePath } from "next/cache";
-import { ApplicationStatus } from "@/generated/prisma/client";
+import { ApplicationStatus, ActivitySource } from "@/generated/prisma/client";
+import { z } from "zod";
+
+const statusSchema = z.enum(applicationStatuses);
+const MAX_IMPORT_ROWS = 1000;
 
 async function getAuthUserId(): Promise<string> {
   const session = await auth();
@@ -28,7 +32,8 @@ export async function getApplications(params?: {
   };
 
   if (params?.status) {
-    where.status = params.status as ApplicationStatus;
+    const parsed = statusSchema.safeParse(params.status);
+    if (parsed.success) where.status = parsed.data;
   }
 
   if (params?.source) {
@@ -36,10 +41,11 @@ export async function getApplications(params?: {
   }
 
   if (params?.search) {
+    const search = params.search.slice(0, 100); // max 100 chars
     where.OR = [
-      { company: { contains: params.search, mode: "insensitive" } },
-      { roleTitle: { contains: params.search, mode: "insensitive" } },
-      { location: { contains: params.search, mode: "insensitive" } },
+      { company: { contains: search, mode: "insensitive" } },
+      { roleTitle: { contains: search, mode: "insensitive" } },
+      { location: { contains: search, mode: "insensitive" } },
     ];
   }
 
@@ -105,7 +111,7 @@ export async function createApplication(data: unknown) {
         roleTitle: application.roleTitle,
         status: application.status,
       },
-      source: "manual",
+      source: ActivitySource.manual,
     },
   });
 
@@ -164,7 +170,7 @@ export async function updateApplication(id: string, data: unknown) {
         applicationId: application.id,
         action: "updated",
         details: JSON.parse(JSON.stringify(changes)),
-        source: "manual",
+        source: ActivitySource.manual,
       },
     });
   }
@@ -176,6 +182,9 @@ export async function updateApplication(id: string, data: unknown) {
 export async function updateApplicationStatus(id: string, status: string) {
   const userId = await getAuthUserId();
 
+  const parsedStatus = statusSchema.safeParse(status);
+  if (!parsedStatus.success) return { error: "Invalid status" };
+
   const existing = await prisma.application.findFirst({
     where: { id, userId },
   });
@@ -183,7 +192,7 @@ export async function updateApplicationStatus(id: string, status: string) {
 
   await prisma.application.update({
     where: { id },
-    data: { status: status as ApplicationStatus },
+    data: { status: parsedStatus.data as ApplicationStatus },
   });
 
   await prisma.activityLog.create({
@@ -192,7 +201,7 @@ export async function updateApplicationStatus(id: string, status: string) {
       applicationId: id,
       action: "updated",
       details: { status: { from: existing.status, to: status } },
-      source: "manual",
+      source: ActivitySource.manual,
     },
   });
 
@@ -218,7 +227,7 @@ export async function archiveApplication(id: string) {
       userId,
       applicationId: id,
       action: existing.archived ? "unarchived" : "archived",
-      source: "manual",
+      source: ActivitySource.manual,
     },
   });
 
@@ -253,6 +262,11 @@ export async function importApplications(
   }>
 ) {
   const userId = await getAuthUserId();
+
+  if (rows.length > MAX_IMPORT_ROWS) {
+    return { success: false, error: `Maximum ${MAX_IMPORT_ROWS} rows allowed per import` };
+  }
+
   const now = new Date();
 
   const created = await prisma.$transaction(
@@ -279,7 +293,7 @@ export async function importApplications(
       applicationId: app.id,
       action: "created",
       details: { company: app.company, roleTitle: app.roleTitle, status: app.status },
-      source: "csv_import",
+      source: ActivitySource.csv_import,
     })),
   });
 
@@ -290,17 +304,19 @@ export async function importApplications(
 export async function getStats() {
   const userId = await getAuthUserId();
 
-  const applications = await prisma.application.findMany({
-    where: { userId, archived: false },
-    select: { status: true },
-  });
+  const rows = await prisma.$queryRaw<{ status: string; count: bigint }[]>`
+    SELECT status, COUNT(*)::bigint as count
+    FROM "Application"
+    WHERE "userId" = ${userId} AND archived = false
+    GROUP BY status
+  `;
 
-  const total = applications.length;
   const byStatus: Record<string, number> = {};
-  for (const app of applications) {
-    byStatus[app.status] = (byStatus[app.status] || 0) + 1;
+  for (const row of rows) {
+    byStatus[row.status] = Number(row.count);
   }
 
+  const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
   const interviews =
     (byStatus.INTERVIEW || 0) +
     (byStatus.FINAL_ROUND || 0) +

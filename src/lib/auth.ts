@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import { CustomPrismaAdapter } from "@/lib/auth-adapter";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { encrypt } from "@/lib/crypto";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: CustomPrismaAdapter(),
@@ -53,19 +54,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     async jwt({ token, account }) {
       if (account?.provider === "google") {
-        // Store Google tokens for Gmail API access
+        // Store encrypted Google tokens for Gmail API access
         if (account.access_token) {
-          await prisma.user.update({
+          const user = await prisma.user.update({
             where: { email: token.email! },
             data: {
-              googleAccessToken: account.access_token,
-              googleRefreshToken: account.refresh_token ?? undefined,
+              googleAccessToken: encrypt(account.access_token),
+              googleRefreshToken: account.refresh_token
+                ? encrypt(account.refresh_token)
+                : undefined,
             },
+            select: { id: true },
           });
+          token.userId = user.id;
+          return token;
         }
       }
 
-      if (token.email) {
+      // Embed userId in token to avoid a DB query on every JWT refresh
+      if (!token.userId && token.email) {
         const user = await prisma.user.findUnique({
           where: { email: token.email },
           select: { id: true },

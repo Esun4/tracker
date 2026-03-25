@@ -7,6 +7,8 @@ import type { gmail_v1 } from "googleapis";
 import OpenAI from "openai";
 import { revalidatePath } from "next/cache";
 import { ApplicationStatus, SuggestedAction } from "@/generated/prisma/client";
+import { encrypt, tryDecrypt } from "@/lib/crypto";
+import pLimit from "p-limit";
 
 async function getAuthUserId(): Promise<string> {
   const session = await auth();
@@ -35,30 +37,43 @@ const IGNORED_SENDER_DOMAINS = new Set([
 ]);
 
 function extractCompanyFromSender(from: string): string | null {
-  // Try display name first: "Acme Corp <recruiting@acme.com>"
   const displayMatch = from.match(/^"?([^"<]+?)"?\s*</);
   if (displayMatch) {
     const name = displayMatch[1].trim();
-    // Ignore generic names like "Recruiting", "HR", "Careers", "No Reply", etc.
     if (!/^(no.?reply|do.?not.?reply|recruiting|careers|hr|jobs|talent|hiring|notifications?|alerts?|support|info|hello|team|noreply)$/i.test(name)) {
       return name;
     }
   }
 
-  // Fall back to domain: strip common subdomains and known generic domains
   const emailMatch = from.match(/@([^>>\s]+)/);
   if (emailMatch) {
     const parts = emailMatch[1].split(".");
-    // Take second-to-last segment (e.g. "acme" from "mail.acme.com")
     const domain = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
     if (!IGNORED_SENDER_DOMAINS.has(domain.toLowerCase())) {
-      // Capitalise first letter
       return domain.charAt(0).toUpperCase() + domain.slice(1);
     }
   }
 
   return null;
 }
+
+const SYSTEM_PROMPT = `You classify emails related to job/internship applications. Return JSON with:
+- action: "NEW_APPLICATION" | "STATUS_UPDATE" | "IRRELEVANT"
+- status: "APPLIED" | "OA" | "INTERVIEW" | "FINAL_ROUND" | "OFFER" | "REJECTED" | "WITHDRAWN" | null
+- company: string | null
+- role: string | null
+- confidence: number (0-1)
+- reasoning: string (one sentence)
+
+NEW_APPLICATION: email confirms an application was just submitted (e.g. "we received your application", "your application has been submitted", "thanks for applying").
+STATUS_UPDATE: email signals a change in an existing application — this includes rejections, interview invites, offers, OA invites, and any other update. Common rejection phrases that mean STATUS_UPDATE with status REJECTED: "not moving forward", "will not be moving forward", "not to move forward with your candidacy", "have decided not to proceed", "we will not be proceeding", "after careful consideration", "not selected", "not successful", "unfortunately", "we won't be moving forward", "thank you for taking part in the recruitment process" (when combined with a negative outcome), "keep your details in our database", "we encourage you to apply to future positions".
+IRRELEVANT: unrelated to job applications, OR is an account/profile setup email (e.g. "set up your candidate account", "complete your profile", "verify your email", "activate your account", "create your account", "welcome to", onboarding emails from job platforms, login/password emails). Classify as IRRELEVANT even if the email mentions a company or job title.
+
+IMPORTANT: An email that thanks you for participating in a recruitment process AND delivers a negative outcome is always STATUS_UPDATE (REJECTED), never NEW_APPLICATION. Only classify as NEW_APPLICATION if the email is purely confirming a fresh submission with no outcome mentioned.
+
+For the company field: extract the employer/hiring company, NOT the job board or platform the email was sent through. Indeed, LinkedIn, Glassdoor, Handshake, WaterlooWorks, ZipRecruiter, Monster, and similar are job boards — never use them as the company value. Look inside the email body for the actual employer name (e.g. "You applied to Software Engineer at Stripe" → company: "Stripe"). If you cannot identify the actual employer, set company to null.`;
+
+const MIN_CONFIDENCE = 0.45;
 
 export async function syncGmailEmails() {
   const userId = await getAuthUserId();
@@ -83,8 +98,17 @@ export async function syncGmailEmails() {
 
   if (!user?.googleAccessToken) {
     return {
-      error:
-        "No Google account connected. Please sign out and sign in with Google to enable Gmail sync.",
+      error: "No Google account connected. Please sign out and sign in with Google to enable Gmail sync.",
+    };
+  }
+
+  // Decrypt stored tokens
+  const accessToken = tryDecrypt(user.googleAccessToken);
+  const refreshToken = tryDecrypt(user.googleRefreshToken);
+
+  if (!accessToken) {
+    return {
+      error: "Gmail credentials need to be refreshed. Please sign out and sign in with Google again.",
     };
   }
 
@@ -94,36 +118,46 @@ export async function syncGmailEmails() {
   );
 
   oauth2Client.setCredentials({
-    access_token: user.googleAccessToken,
-    refresh_token: user.googleRefreshToken ?? undefined,
+    access_token: accessToken,
+    refresh_token: refreshToken ?? undefined,
   });
 
-  // Persist refreshed tokens back to DB automatically
+  // Persist refreshed tokens back to DB (re-encrypted)
   oauth2Client.on("tokens", async (tokens) => {
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(tokens.access_token && { googleAccessToken: tokens.access_token }),
-        ...(tokens.refresh_token && {
-          googleRefreshToken: tokens.refresh_token,
-        }),
-      },
-    });
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(tokens.access_token && { googleAccessToken: encrypt(tokens.access_token) }),
+          ...(tokens.refresh_token && { googleRefreshToken: encrypt(tokens.refresh_token) }),
+        },
+      });
+    } catch (err) {
+      console.error("Failed to persist refreshed tokens:", err);
+    }
   });
 
   const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-  const listResponse = await gmail.users.messages.list({
-    userId: "me",
-    maxResults: 50,
-  });
+  let listResponse;
+  try {
+    listResponse = await gmail.users.messages.list({
+      userId: "me",
+      maxResults: 50,
+    });
+  } catch (err: unknown) {
+    const status = (err as { status?: number })?.status;
+    if (status === 401 || status === 403) {
+      return {
+        error: "Gmail access has expired. Please sign out and sign in with Google again.",
+      };
+    }
+    throw err;
+  }
 
   const messages = listResponse.data.messages ?? [];
   if (messages.length === 0) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { lastEmailSync: new Date() },
-    });
+    await prisma.user.update({ where: { id: userId }, data: { lastEmailSync: new Date() } });
     return { success: true, newSuggestions: 0 };
   }
 
@@ -135,18 +169,14 @@ export async function syncGmailEmails() {
   });
   const existingIdSet = new Set(existingIds.map((e) => e.emailMessageId));
 
-  const newMessages = messages.filter(
-    (m) => m.id && !existingIdSet.has(m.id)
-  );
+  const newMessages = messages.filter((m) => m.id && !existingIdSet.has(m.id));
 
   if (newMessages.length === 0) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { lastEmailSync: new Date() },
-    });
+    await prisma.user.update({ where: { id: userId }, data: { lastEmailSync: new Date() } });
     return { success: true, newSuggestions: 0 };
   }
 
+  // Fetch all message bodies in parallel
   const fullMessages = await Promise.all(
     newMessages.map((m) =>
       gmail.users.messages.get({ userId: "me", id: m.id!, format: "full" })
@@ -155,27 +185,16 @@ export async function syncGmailEmails() {
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  let newSuggestions = 0;
+  // Classify emails in parallel, max 5 concurrent OpenAI calls
+  const limit = pLimit(5);
 
-  for (const response of fullMessages) {
-    const message = response.data;
-    if (!message.id) continue;
-
-    const headers = message.payload?.headers ?? [];
-    const subject =
-      headers.find((h) => h.name?.toLowerCase() === "subject")?.value ??
-      "(no subject)";
-    const from =
-      headers.find((h) => h.name?.toLowerCase() === "from")?.value ?? "";
-    const dateStr =
-      headers.find((h) => h.name?.toLowerCase() === "date")?.value ?? "";
-    const snippet = message.snippet ?? "";
-
-    const emailDate = dateStr ? new Date(dateStr) : new Date();
-    const body = message.payload ? extractEmailBody(message.payload) : "";
-    const emailText = `Subject: ${subject}\nFrom: ${from}\nSnippet: ${snippet}\n\nBody:\n${body.slice(0, 2000)}`;
-
-    let classification: {
+  type ClassificationResult = {
+    message: gmail_v1.Schema$Message;
+    subject: string;
+    from: string;
+    snippet: string;
+    emailDate: Date;
+    classification: {
       action: string;
       status: string | null;
       company: string | null;
@@ -183,51 +202,59 @@ export async function syncGmailEmails() {
       confidence: number;
       reasoning: string;
     };
+  } | null;
 
-    try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `You classify emails related to job/internship applications. Return JSON with:
-- action: "NEW_APPLICATION" | "STATUS_UPDATE" | "IRRELEVANT"
-- status: "APPLIED" | "OA" | "INTERVIEW" | "FINAL_ROUND" | "OFFER" | "REJECTED" | "WITHDRAWN" | null
-- company: string | null
-- role: string | null
-- confidence: number (0-1)
-- reasoning: string (one sentence)
+  const results = await Promise.all(
+    fullMessages.map((response) =>
+      limit(async (): Promise<ClassificationResult> => {
+        const message = response.data;
+        if (!message.id) return null;
 
-NEW_APPLICATION: email confirms an application was just submitted (e.g. "we received your application", "your application has been submitted", "thanks for applying").
-STATUS_UPDATE: email signals a change in an existing application — this includes rejections, interview invites, offers, OA invites, and any other update. Common rejection phrases that mean STATUS_UPDATE with status REJECTED: "not moving forward", "will not be moving forward", "not to move forward with your candidacy", "have decided not to proceed", "we will not be proceeding", "after careful consideration", "not selected", "not successful", "unfortunately", "we won't be moving forward", "thank you for taking part in the recruitment process" (when combined with a negative outcome), "keep your details in our database", "we encourage you to apply to future positions".
-IRRELEVANT: unrelated to job applications, OR is an account/profile setup email (e.g. "set up your candidate account", "complete your profile", "verify your email", "activate your account", "create your account", "welcome to", onboarding emails from job platforms, login/password emails). Classify as IRRELEVANT even if the email mentions a company or job title.
+        const headers = message.payload?.headers ?? [];
+        const subject = headers.find((h) => h.name?.toLowerCase() === "subject")?.value ?? "(no subject)";
+        const from = headers.find((h) => h.name?.toLowerCase() === "from")?.value ?? "";
+        const dateStr = headers.find((h) => h.name?.toLowerCase() === "date")?.value ?? "";
+        const snippet = message.snippet ?? "";
+        const emailDate = dateStr ? new Date(dateStr) : new Date();
+        const body = message.payload ? extractEmailBody(message.payload) : "";
+        const emailText = `Subject: ${subject}\nFrom: ${from}\nSnippet: ${snippet}\n\nBody:\n${body.slice(0, 2000)}`;
 
-IMPORTANT: An email that thanks you for participating in a recruitment process AND delivers a negative outcome is always STATUS_UPDATE (REJECTED), never NEW_APPLICATION. Only classify as NEW_APPLICATION if the email is purely confirming a fresh submission with no outcome mentioned.
+        try {
+          const completion = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: emailText },
+            ],
+          });
+          const classification = JSON.parse(completion.choices[0].message.content ?? "{}");
+          return { message, subject, from, snippet, emailDate, classification };
+        } catch {
+          return null;
+        }
+      })
+    )
+  );
 
-For the company field: extract the employer/hiring company, NOT the job board or platform the email was sent through. Indeed, LinkedIn, Glassdoor, Handshake, WaterlooWorks, ZipRecruiter, Monster, and similar are job boards — never use them as the company value. Look inside the email body for the actual employer name (e.g. "You applied to Software Engineer at Stripe" → company: "Stripe"). If you cannot identify the actual employer, set company to null.`,
-          },
-          { role: "user", content: emailText },
-        ],
-      });
-      classification = JSON.parse(
-        completion.choices[0].message.content ?? "{}"
-      );
-    } catch {
-      continue;
-    }
+  let newSuggestions = 0;
+
+  for (const result of results) {
+    if (!result) continue;
+    const { message, subject, from, snippet, emailDate, classification } = result;
 
     if (
       classification.action === "IRRELEVANT" ||
       !["NEW_APPLICATION", "STATUS_UPDATE"].includes(classification.action)
-    ) {
-      continue;
-    }
+    ) continue;
+
+    const confidence = Math.min(1, Math.max(0, classification.confidence ?? 0));
+    if (confidence < MIN_CONFIDENCE) continue;
 
     await prisma.emailSuggestion.create({
       data: {
         userId,
-        emailMessageId: message.id,
+        emailMessageId: message.id!,
         emailSubject: subject,
         emailSender: from,
         emailDate,
@@ -236,7 +263,7 @@ For the company field: extract the employer/hiring company, NOT the job board or
         suggestedStatus: (classification.status as ApplicationStatus) ?? null,
         suggestedCompany: classification.company ?? extractCompanyFromSender(from),
         suggestedRole: classification.role ?? null,
-        confidence: Math.min(1, Math.max(0, classification.confidence ?? 0)),
+        confidence,
         reasoning: classification.reasoning ?? null,
       },
     });
@@ -244,10 +271,7 @@ For the company field: extract the employer/hiring company, NOT the job board or
     newSuggestions++;
   }
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { lastEmailSync: new Date() },
-  });
+  await prisma.user.update({ where: { id: userId }, data: { lastEmailSync: new Date() } });
 
   revalidatePath("/dashboard");
   return { success: true, newSuggestions };
