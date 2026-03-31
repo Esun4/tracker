@@ -160,6 +160,12 @@ export default function SignInPage() {
               Create one
             </Link>
           </p>
+
+          <p className="text-center text-xs text-muted-foreground/60">
+            <Link href="/privacy" className="underline-offset-4 hover:underline hover:text-muted-foreground">
+              Privacy Policy
+            </Link>
+          </p>
         </div>
       </div>
     </div>
