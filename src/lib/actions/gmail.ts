@@ -98,7 +98,7 @@ export async function syncGmailEmails() {
 
   if (!user?.googleAccessToken) {
     return {
-      error: "No Google account connected. Please sign out and sign in with Google to enable Gmail sync.",
+      error: "No Google account connected. Please sign out and sign in with Google to enable Gmail sync and email replies.",
     };
   }
 
@@ -108,7 +108,7 @@ export async function syncGmailEmails() {
 
   if (!accessToken) {
     return {
-      error: "Gmail credentials need to be refreshed. Please sign out and sign in with Google again.",
+      error: "Gmail credentials need to be refreshed. Please sign out and sign in with Google again to restore access and unlock email replies.",
     };
   }
 
@@ -149,7 +149,7 @@ export async function syncGmailEmails() {
     const status = (err as { status?: number })?.status;
     if (status === 401 || status === 403) {
       return {
-        error: "Gmail access has expired. Please sign out and sign in with Google again.",
+        error: "Gmail access has expired. Please sign out and sign in with Google again to restore access and unlock email replies.",
       };
     }
     throw err;
