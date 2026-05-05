@@ -131,6 +131,8 @@ model EmailSuggestion {
   suggestedRole    String?
   confidence      Float
   reasoning       String?
+  emailThreadId   String?
+  replySentAt     DateTime?
   applicationId   String?
   resolved        Boolean         @default(false)
   resolvedAction  String?

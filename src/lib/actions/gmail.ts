@@ -255,6 +255,7 @@ export async function syncGmailEmails() {
       data: {
         userId,
         emailMessageId: message.id!,
+        emailThreadId: message.threadId ?? null,
         emailSubject: subject,
         emailSender: from,
         emailDate,

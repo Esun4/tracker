@@ -5,6 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { applicationSchema } from "@/lib/schemas";
 import { revalidatePath } from "next/cache";
 import { ApplicationStatus, ActivitySource } from "@/generated/prisma/client";
+import OpenAI from "openai";
+import { google } from "googleapis";
+import { encrypt, tryDecrypt } from "@/lib/crypto";
 
 async function getAuthUserId(): Promise<string> {
   const session = await auth();
@@ -246,6 +249,148 @@ export async function acceptStatusUpdate(
       resolvedAt: new Date(),
       applicationId,
     },
+  });
+
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
+export async function generateEmailDraft(suggestionId: string) {
+  const userId = await getAuthUserId();
+
+  const suggestion = await prisma.emailSuggestion.findFirst({
+    where: { id: suggestionId, userId },
+  });
+  if (!suggestion) return { error: "Suggestion not found" };
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4.1",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You draft short, professional email replies for job applicants. Write in first person. Be warm but concise — 3-5 sentences maximum. Never use em dashes. Do not add a subject line. Do not include a greeting line (e.g. \"Hi [name]\") or sign-off — those will be added separately. Just write the body paragraph(s).",
+      },
+      {
+        role: "user",
+        content: `Draft a reply to this email I received about my job application.
+
+Email subject: ${suggestion.emailSubject}
+Sender: ${suggestion.emailSender}
+Email snippet: ${suggestion.emailSnippet ?? ""}
+Company: ${suggestion.suggestedCompany ?? ""}
+Role: ${suggestion.suggestedRole ?? ""}
+What happened: ${suggestion.suggestedAction} — ${suggestion.suggestedStatus ?? ""}
+
+The reply should be appropriate for the situation. For example:
+- If this is an interview invite, express enthusiasm and confirm availability
+- If this is an OA invite, thank them and confirm you'll complete it
+- If this is a rejection, thank them graciously and express interest in future opportunities
+- If this is an offer, express excitement and ask about next steps
+
+My name is ${user?.name ?? ""}.`,
+      },
+    ],
+  });
+
+  const draft = completion.choices[0].message.content ?? "";
+  return { success: true, draft };
+}
+
+export async function sendEmailReply(suggestionId: string, body: string) {
+  const userId = await getAuthUserId();
+
+  const suggestion = await prisma.emailSuggestion.findFirst({
+    where: { id: suggestionId, userId },
+  });
+  if (!suggestion) return { error: "Suggestion not found" };
+
+  if (!suggestion.emailThreadId) {
+    return { error: "Cannot reply — thread ID not available. Try re-syncing Gmail." };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { googleAccessToken: true, googleRefreshToken: true, name: true, email: true },
+  });
+
+  if (!user?.googleAccessToken) {
+    return { error: "No Google account connected." };
+  }
+
+  const accessToken = tryDecrypt(user.googleAccessToken);
+  const refreshToken = tryDecrypt(user.googleRefreshToken);
+
+  if (!accessToken) {
+    return {
+      error: "Gmail credentials need to be refreshed. Please sign out and sign in with Google again to restore access and unlock email replies.",
+    };
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+
+  oauth2Client.setCredentials({
+    access_token: accessToken,
+    refresh_token: refreshToken ?? undefined,
+  });
+
+  oauth2Client.on("tokens", async (tokens) => {
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(tokens.access_token && { googleAccessToken: encrypt(tokens.access_token) }),
+          ...(tokens.refresh_token && { googleRefreshToken: encrypt(tokens.refresh_token) }),
+        },
+      });
+    } catch (err) {
+      console.error("Failed to persist refreshed tokens:", err);
+    }
+  });
+
+  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+  const fromHeader = user.name ? `${user.name} <${user.email}>` : user.email;
+  const rawEmail = [
+    `To: ${suggestion.emailSender}`,
+    `From: ${fromHeader}`,
+    `Subject: Re: ${suggestion.emailSubject}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    `Hi,\n\n${body}\n\nBest,\n${user.name ?? ""}`,
+  ].join("\r\n");
+
+  const encodedMessage = Buffer.from(rawEmail).toString("base64url");
+
+  try {
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encodedMessage, threadId: suggestion.emailThreadId },
+    });
+  } catch (err: unknown) {
+    const status = (err as { status?: number })?.status;
+    if (status === 401 || status === 403) {
+      return {
+        error: "Gmail access has expired. Please sign out and sign in with Google again to restore access and unlock email replies.",
+      };
+    }
+    throw err;
+  }
+
+  await prisma.emailSuggestion.update({
+    where: { id: suggestionId },
+    data: { replySentAt: new Date() },
   });
 
   revalidatePath("/dashboard");

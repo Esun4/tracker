@@ -40,6 +40,7 @@ import {
 } from "@/lib/actions/suggestions";
 import { toast } from "sonner";
 import type { Application, EmailSuggestion } from "@/generated/prisma/client";
+import { EmailReplyDialog } from "./email-reply-dialog";
 
 interface EmailSuggestionsSectionProps {
   suggestions: EmailSuggestion[];
@@ -56,6 +57,8 @@ const actionColors: Record<string, string> = {
   NEW_APPLICATION: "bg-blue-100 text-blue-800",
   STATUS_UPDATE: "bg-amber-100 text-amber-800",
 };
+
+const REPLY_WORTHY = ["INTERVIEW", "OA", "OFFER", "FINAL_ROUND"];
 
 const commonSources = [
   "LinkedIn",
@@ -75,12 +78,14 @@ function SuggestionReviewModal({
   applications,
   onClose,
   onResolved,
+  onAccepted,
   startIndex = 0,
 }: {
   suggestions: EmailSuggestion[];
   applications: Application[];
   onClose: () => void;
   onResolved: () => void;
+  onAccepted?: (suggestion: EmailSuggestion) => void;
   startIndex?: number;
 }) {
   const [suggestions, setSuggestions] = useState(initialSuggestions);
@@ -134,11 +139,15 @@ function SuggestionReviewModal({
       });
     } else {
       if (!selectedAppId) {
-        toast.error("Please select an application to update");
-        setLoading(false);
-        return;
+        result = await acceptNewApplication(current.id, {
+          company: current.suggestedCompany ?? "Unknown",
+          roleTitle: current.suggestedRole ?? "Unknown",
+          status: selectedStatus,
+          applicationDate: new Date(current.emailDate).toISOString().split("T")[0],
+        });
+      } else {
+        result = await acceptStatusUpdate(current.id, selectedAppId, selectedStatus);
       }
-      result = await acceptStatusUpdate(current.id, selectedAppId, selectedStatus);
     }
 
     setLoading(false);
@@ -153,6 +162,9 @@ function SuggestionReviewModal({
         ? "Application added"
         : "Status updated"
     );
+    if (current.suggestedStatus && REPLY_WORTHY.includes(current.suggestedStatus)) {
+      onAccepted?.(current);
+    }
     removeCurrent();
     onResolved();
   }
@@ -372,10 +384,12 @@ function NewApplicationDialog({
   suggestion,
   onClose,
   onResolved,
+  onAccepted,
 }: {
   suggestion: EmailSuggestion;
   onClose: () => void;
   onResolved: () => void;
+  onAccepted?: (suggestion: EmailSuggestion) => void;
 }) {
   const [loading, setLoading] = useState(false);
 
@@ -404,6 +418,9 @@ function NewApplicationDialog({
     }
 
     toast.success("Application added");
+    if (suggestion.suggestedStatus && REPLY_WORTHY.includes(suggestion.suggestedStatus)) {
+      onAccepted?.(suggestion);
+    }
     onClose();
     onResolved();
   }
@@ -548,11 +565,13 @@ function StatusUpdateDialog({
   applications,
   onClose,
   onResolved,
+  onAccepted,
 }: {
   suggestion: EmailSuggestion;
   applications: Application[];
   onClose: () => void;
   onResolved: () => void;
+  onAccepted?: (suggestion: EmailSuggestion) => void;
 }) {
   const [loading, setLoading] = useState(false);
 
@@ -568,12 +587,15 @@ function StatusUpdateDialog({
   );
 
   async function handleAccept() {
-    if (!selectedAppId) {
-      toast.error("Please select an application to update");
-      return;
-    }
     setLoading(true);
-    const result = await acceptStatusUpdate(suggestion.id, selectedAppId, selectedStatus);
+    const result = selectedAppId
+      ? await acceptStatusUpdate(suggestion.id, selectedAppId, selectedStatus)
+      : await acceptNewApplication(suggestion.id, {
+          company: suggestion.suggestedCompany ?? "Unknown",
+          roleTitle: suggestion.suggestedRole ?? "Unknown",
+          status: selectedStatus,
+          applicationDate: new Date(suggestion.emailDate).toISOString().split("T")[0],
+        });
     setLoading(false);
 
     if (result.error) {
@@ -581,7 +603,10 @@ function StatusUpdateDialog({
       return;
     }
 
-    toast.success("Application status updated");
+    toast.success(selectedAppId ? "Application status updated" : "Application added");
+    if (suggestion.suggestedStatus && REPLY_WORTHY.includes(suggestion.suggestedStatus)) {
+      onAccepted?.(suggestion);
+    }
     onClose();
     onResolved();
   }
@@ -653,8 +678,8 @@ function StatusUpdateDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleAccept} disabled={loading || !selectedAppId}>
-            {loading ? "Updating..." : "Update Status"}
+          <Button onClick={handleAccept} disabled={loading}>
+            {loading ? "Updating..." : selectedAppId ? "Update Status" : "Add Application"}
           </Button>
         </div>
       </DialogContent>
@@ -675,6 +700,7 @@ export function EmailSuggestionsSection({
   const [acceptingAll, setAcceptingAll] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewStartIndex, setReviewStartIndex] = useState(0);
+  const [replyTarget, setReplyTarget] = useState<EmailSuggestion | null>(null);
 
   function openReviewAt(index: number) {
     setReviewStartIndex(index);
@@ -848,6 +874,7 @@ export function EmailSuggestionsSection({
           applications={applications}
           onClose={() => setReviewOpen(false)}
           onResolved={onResolved}
+          onAccepted={(s) => setReplyTarget(s)}
           startIndex={reviewStartIndex}
         />
       )}
@@ -859,6 +886,7 @@ export function EmailSuggestionsSection({
           suggestion={accepting}
           onClose={() => setAccepting(null)}
           onResolved={onResolved}
+          onAccepted={(s) => setReplyTarget(s)}
         />
       )}
 
@@ -869,6 +897,16 @@ export function EmailSuggestionsSection({
           applications={applications}
           onClose={() => setAccepting(null)}
           onResolved={onResolved}
+          onAccepted={(s) => setReplyTarget(s)}
+        />
+      )}
+
+      {replyTarget && (
+        <EmailReplyDialog
+          suggestion={replyTarget}
+          open={!!replyTarget}
+          onOpenChange={(open) => { if (!open) setReplyTarget(null); }}
+          onSent={() => { setReplyTarget(null); onResolved(); }}
         />
       )}
     </div>
